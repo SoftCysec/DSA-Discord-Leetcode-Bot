@@ -15,7 +15,7 @@ LT_API_URL = 'https://leetcode.com/api/problems/all/'
 PROBLEM_URL_BASE = 'https://leetcode.com/problems/'
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None, reconnect=True)
 
 all_problems = []
 free_problems = []
@@ -46,7 +46,10 @@ def fetch_problems_from_api():
 
 @tasks.loop(minutes=6)
 async def post_scheduled_challenge():
-    guild = next(iter(bot.guilds))
+    if not bot.guilds:  # Check if the bot is connected to any guilds
+        return
+
+    guild = bot.guilds[0]
     channel = discord.utils.get(guild.text_channels, name='code-challenges')
     if not channel:
         if guild.me.guild_permissions.manage_channels:
@@ -72,7 +75,6 @@ async def post_scheduled_challenge():
 async def help_command(ctx):
     embed = discord.Embed(title="Coding Challenges DSA Bot Help", description="List of available commands", color=0x00ff00)
     embed.add_field(name="!problem challenge [type] [difficulty]", value="Fetches a random problem. Type can be 'free' or 'paid'. Difficulty can be 'easy', 'medium', or 'hard'.", inline=False)
-    embed.add_field(name="!problem info", value="Displays information about the number of problems on LeetCode.", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name='challenge')
@@ -127,11 +129,12 @@ async def on_ready():
 @bot.event
 async def on_member_join(member):
     channel_name = f"{member.name}-challenges"
-    overwrites = {
-        member.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        member: discord.PermissionOverwrite(read_messages=True)
-    }
-    await member.guild.create_text_channel(channel_name, overwrites=overwrites)
+    if not discord.utils.get(member.guild.text_channels, name=channel_name):
+        overwrites = {
+            member.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            member: discord.PermissionOverwrite(read_messages=True)
+        }
+        await member.guild.create_text_channel(channel_name, overwrites=overwrites)
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -139,5 +142,9 @@ async def on_command_error(ctx, error):
         await ctx.send(f"An error occurred while processing your command: {error.original}")
     else:
         await ctx.send(f"An error occurred: {error}")
+
+@bot.event
+async def on_resumed():
+    print("Bot reconnected.")
 
 bot.run(TOKEN)
