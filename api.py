@@ -20,6 +20,7 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 all_problems = []
 free_problems = []
 paid_problems = []
+user_query_count = {}
 
 class Problem:
     def __init__(self, problem_data):
@@ -45,12 +46,8 @@ def fetch_problems_from_api():
 
 @tasks.loop(minutes=6)
 async def post_scheduled_challenge():
-    guild = next(iter(bot.guilds))  # Get the first server the bot is connected to
-    
-    # Check if the "code-challenges" channel exists
+    guild = next(iter(bot.guilds))
     channel = discord.utils.get(guild.text_channels, name='code-challenges')
-    
-    # If the channel doesn't exist, create it
     if not channel:
         if guild.me.guild_permissions.manage_channels:
             channel = await guild.create_text_channel('code-challenges')
@@ -80,6 +77,14 @@ async def help_command(ctx):
 
 @bot.command(name='challenge')
 async def fetch_challenge(ctx, type: str = 'free', difficulty: str = 'easy'):
+    user_id = ctx.author.id
+    if user_id in user_query_count:
+        if user_query_count[user_id] >= 3:
+            await ctx.send("You've reached the maximum number of challenges for today.")
+            return
+    else:
+        user_query_count[user_id] = 0
+    
     if type not in ['free', 'paid']:
         await ctx.send("Type must be 'free' or 'paid'.")
         return
@@ -88,7 +93,6 @@ async def fetch_challenge(ctx, type: str = 'free', difficulty: str = 'easy'):
         await ctx.send("Difficulty must be 'easy', 'medium', or 'hard'.")
         return
     
-    # Determine which problems to fetch based on user input
     problems = free_problems if type == 'free' else paid_problems
     problems = [problem for problem in problems if problem.difficulty.lower() == difficulty]
     
@@ -98,7 +102,6 @@ async def fetch_challenge(ctx, type: str = 'free', difficulty: str = 'easy'):
     
     selected_problem = random.choice(problems)
     
-    # Create or fetch the user's private channel
     channel_name = f"{ctx.author.name}-challenges"
     overwrites = {
         ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
@@ -112,7 +115,7 @@ async def fetch_challenge(ctx, type: str = 'free', difficulty: str = 'easy'):
             await ctx.send("I don't have permission to create channels. Please grant the 'Manage Channels' permission.")
             return
     
-    # Send the selected problem to the user's private channel
+    user_query_count[user_id] += 1
     await channel.send(f"**{selected_problem.title}**\nDifficulty: {selected_problem.difficulty}\n{selected_problem.url}")
 
 @bot.event
@@ -120,6 +123,15 @@ async def on_ready():
     print(f"We have logged in as {bot.user}")
     fetch_problems_from_api()
     post_scheduled_challenge.start()
+
+@bot.event
+async def on_member_join(member):
+    channel_name = f"{member.name}-challenges"
+    overwrites = {
+        member.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        member: discord.PermissionOverwrite(read_messages=True)
+    }
+    await member.guild.create_text_channel(channel_name, overwrites=overwrites)
 
 @bot.event
 async def on_command_error(ctx, error):
