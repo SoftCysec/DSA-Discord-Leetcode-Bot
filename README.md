@@ -2,7 +2,7 @@
 
 Welcome to the **Coding Challenges DSA Bot** for Discord! This bot is your companion for enhancing your data structure and algorithm skills right within Discord. It fetches coding challenges from LeetCode, giving you and your server members a fresh challenge to tackle every day.
 
-![LeetCode Logo](https://leetcode.com/static/images/LeetCode_Sharing.png)
+![LeetCode Logo](https://leetcode.com/_next/static/images/logo-dark-c96c407d175e36c81e236fcfdd682a0b.png)
 
 ## 🌟 Features
 
