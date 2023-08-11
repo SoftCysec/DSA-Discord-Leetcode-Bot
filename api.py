@@ -1,24 +1,25 @@
+import discord
+from discord.ext import commands, tasks
+from discord.errors import Forbidden
+from dotenv import load_dotenv
 import os
 import requests
 import random
-import discord
-from discord.ext import commands
 from datetime import datetime
-from dotenv import load_dotenv
 
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
-PREFIX = '!'
+PREFIX = '!problem'
 LT_API_URL = 'https://leetcode.com/api/problems/all/'
 PROBLEM_URL_BASE = 'https://leetcode.com/problems/'
+
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
 all_problems = []
 free_problems = []
 paid_problems = []
-
-intents = discord.Intents.all()  # This will enable all intents, including member-related ones
-bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 class Problem:
     def __init__(self, problem_data):
@@ -37,86 +38,76 @@ def fetch_problems_from_api():
         for problem_data in data['stat_status_pairs']:
             problem = Problem(problem_data)
             all_problems.append(problem)
-            if not problem.paid_only:
-                free_problems.append(problem)
-            else:
+            if problem.paid_only:
                 paid_problems.append(problem)
+            else:
+                free_problems.append(problem)
+
+@tasks.loop(hours=6)
+async def post_scheduled_challenge():
+    channel = discord.utils.get(bot.get_all_channels(), name='code-challenges')
+    if not channel:
+        return
+    
+    current_hour = datetime.utcnow().hour
+    if 0 <= current_hour < 6:
+        difficulty = 'Easy'
+    elif 6 <= current_hour < 12:
+        difficulty = 'Medium'
+    else:
+        difficulty = 'Hard'
+    
+    problems = [problem for problem in free_problems if problem.difficulty == difficulty]
+    if problems:
+        selected_problem = random.choice(problems)
+        await channel.send(f"**{selected_problem.title}**\nDifficulty: {selected_problem.difficulty}\n{selected_problem.url}")
+
+@bot.command(name='help')
+async def help_command(ctx):
+    """Displays help information."""
+    embed = discord.Embed(title="Coding Challenges DSA Bot Help", description="List of available commands", color=0x00ff00)
+    embed.add_field(name="!problem random [type] [difficulty]", value="Fetches a random problem. Type can be 'free' or 'paid'. Difficulty can be 'easy', 'medium', or 'hard'.", inline=False)
+    embed.add_field(name="!problem info", value="Displays information about the number of problems on LeetCode.", inline=False)
+    await ctx.send(embed=embed)
 
 @bot.command(name='challenge')
-async def fetch_challenge(ctx, payment_type: str = 'free', difficulty: str = 'easy'):
-    # Normalize the parameters
-    payment_type = payment_type.lower()
-    difficulty = difficulty.capitalize()
-
-    # Filter problems based on payment type and difficulty
-    problems_to_consider = free_problems if payment_type == 'free' else paid_problems
-    problems_of_difficulty = [problem for problem in problems_to_consider if problem.difficulty == difficulty]
-
-    if not problems_of_difficulty:
-        await ctx.send(f"No {difficulty} problems available for {payment_type}.")
+async def fetch_challenge(ctx, type: str = 'free', difficulty: str = 'easy'):
+    """Get a challenge based on user's preference."""
+    if type not in ['free', 'paid']:
+        await ctx.send("Type must be 'free' or 'paid'.")
         return
-
-    selected_problem = random.choice(problems_of_difficulty)
-
-    # Check if the user already has a private channel
-    channel_name = f"{ctx.author.name.lower()}-private"
-    channel = discord.utils.get(ctx.guild.text_channels, name=channel_name)
-
-    # If not, create one
-    if not channel:
-        overwrites = {
-            ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            ctx.author: discord.PermissionOverwrite(read_messages=True)
-        }
-        channel = await ctx.guild.create_text_channel(channel_name, overwrites=overwrites)
-
-    await channel.send(f"**{selected_problem.title}**\nDifficulty: {selected_problem.difficulty}\n{selected_problem.url}")
-
-@bot.command(name='scheduled_challenge')
-async def scheduled_challenge(ctx):
-    current_hour = datetime.now().hour
-
-    # Schedule based on hours
-    schedule = {
-        6: 'Easy',
-        12: 'Medium',
-        18: 'Hard'
-    }
-
-    if current_hour in schedule:
-        difficulty = schedule[current_hour]
-        problems_of_difficulty = [problem for problem in free_problems if problem.difficulty == difficulty]
-        if not problems_of_difficulty:
-            await ctx.send(f"No {difficulty} problems available.")
-            return
-
-        selected_problem = random.choice(problems_of_difficulty)
-
-        # Find the "code-challenges" channel
-        channel = discord.utils.get(ctx.guild.channels, name="code-challenges")
-        if not channel:
-            await ctx.send("Couldn't find the 'code-challenges' channel.")
-            return
-
-        await channel.send(f"**{selected_problem.title}**\nDifficulty: {selected_problem.difficulty}\n{selected_problem.url}")
-    else:
-        await ctx.send("It's not the scheduled time for a challenge.")
-
-@bot.event
-async def on_member_join(member):
-    # Create a private channel for the member
-    channel_name = f"{member.name.lower()}-private"
+    
+    if difficulty not in ['easy', 'medium', 'hard']:
+        await ctx.send("Difficulty must be 'easy', 'medium', or 'hard'.")
+        return
+    
+    channel_name = f"{ctx.author.name}-challenges"
     overwrites = {
-        member.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        member: discord.PermissionOverwrite(read_messages=True)
+        ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        ctx.author: discord.PermissionOverwrite(read_messages=True)
     }
-    await member.guild.create_text_channel(channel_name, overwrites=overwrites)
+    channel = discord.utils.get(ctx.guild.text_channels, name=channel_name)
+    if not channel:
+        if not ctx.guild.me.guild_permissions.manage_channels:
+            await ctx.send("I don't have permission to create channels. Please grant the 'Manage Channels' permission.")
+            return
+        channel = await ctx.guild.create_text_channel(channel_name, overwrites=overwrites)
+    
+    problems = free_problems if type == 'free' else paid_problems
+    problems = [problem for problem in problems if problem.difficulty.lower() == difficulty]
+    
+    if not problems:
+        await channel.send(f"No {type} problems found for {difficulty} difficulty.")
+        return
+    
+    selected_problem = random.choice(problems)
+    await channel.send(f"**{selected_problem.title}**\nDifficulty: {selected_problem.difficulty}\n{selected_problem.url}")
 
 @bot.event
 async def on_ready():
     print(f"We have logged in as {bot.user}")
     fetch_problems_from_api()
-    
+    post_scheduled_challenge.start()
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -124,6 +115,5 @@ async def on_command_error(ctx, error):
         await ctx.send(f"An error occurred while processing your command: {error.original}")
     else:
         await ctx.send(f"An error occurred: {error}")
-
 
 bot.run(TOKEN)
