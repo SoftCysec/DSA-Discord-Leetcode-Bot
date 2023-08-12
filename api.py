@@ -11,8 +11,8 @@ load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 PREFIX = '!problem'
-LT_API_URL = 'https://leetcode.com/api/problems/all/'
-PROBLEM_URL_BASE = 'https://leetcode.com/problems/'
+LT_API_URL = os.getenv('LT_API_URL')
+PROBLEM_URL_BASE = os.getenv('PROBLEM_URL_BASE')
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None, reconnect=True)
@@ -44,7 +44,7 @@ def fetch_problems_from_api():
             else:
                 free_problems.append(problem)
 
-@tasks.loop(minutes=6)
+@tasks.loop(hours=1)
 async def post_scheduled_challenge():
     if not bot.guilds:  # Check if the bot is connected to any guilds
         return
@@ -58,13 +58,19 @@ async def post_scheduled_challenge():
             print("Missing permissions to create the 'code-challenges' channel.")
             return
     
-    current_minute = datetime.utcnow().minute
-    if 0 <= current_minute < 6:
+    current_hour = datetime.utcnow().hour
+    
+    # Check for the 6am window (4am to 8am)
+    if 4 <= current_hour <= 8:
         difficulty = 'Easy'
-    elif 6 <= current_minute < 12:
+    # Check for the 12pm window (10am to 2pm)
+    elif 10 <= current_hour <= 14:
         difficulty = 'Medium'
-    else:
+    # Check for the 6pm window (4pm to 8pm)
+    elif 16 <= current_hour <= 20:
         difficulty = 'Hard'
+    else:
+        return  # Exit the function if it's not within one of the specified windows
     
     problems = [problem for problem in free_problems if problem.difficulty == difficulty]
     if problems:
